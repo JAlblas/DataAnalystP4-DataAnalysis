@@ -1,0 +1,1127 @@
+Data Analysis P4 by Jasper Alblas
+========================================================
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=10, fig.height=6,
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+# Introduction 
+
+In this project, I will take a look at a dataset over house sales in King County, 
+Washington in the U.S. The subject of this study will be to investigate which 
+variables have an influence on house prices. This dataset includes 21 different 
+variables based on house sales between May 2014 and May 2015. This dataset set 
+can be found here: 
+https://www.kaggle.com/harlfoxem/housesalesprediction
+
+It includes 21613 observations, with 21 variables.
+
+
+*The following variables are included:*
+
+1. id
+2. date: Date on which property was sold
+3. price: Price for which property was sold
+4. bedrooms Number of bedrooms
+5. bathrooms: Number of bathrooms, can have decimal values as bathrooms without
+  show count for 0.5
+6. sqft_living: Living space in square feet
+7. sqft_lot: Land space in square feet
+8. floors: Number of floors 
+9. waterfront:  A dummy variable for whether the apartment was overlooking the 
+  waterfront or not 
+10. view:  An index from 0 to 4 of how good the view of the property was 
+11. condition: Relative to age and grade. Coded 1-5.
+  1 = Poor- Worn out.
+  2 = Fair- Badly worn.
+  3 = Average
+  4 = Good
+  5= Very Good
+12. grade: 	Classification by construction quality which refers to the types of 
+      materials used and the quality of workmanship.
+      Buildings of better quality (higher grade) cost more to build per unit of 
+      measure and command higher value. Index from 1 to 13.
+13. sqft_above: Living space above ground level in square feet
+14. sqft_basement: Living space below ground level in square feet
+15. yr_built: The year the house was built
+16. yr_renovated: The year of the house's last renovation
+17. zipcode: Zipcode of area 
+18. sqft_living15: Average of house living space of nearest 15 neighbors in 
+  square feet.
+19. sqft_lot15: Average of lot space of nearest 15 neightbors in square feet.
+20. x. X coordinate, will not be used in regression, just for showing on a map.
+21. y. Y coordinate, same as above.
+
+
+*Sources:* 
+https://www.kaggle.com/harlfoxem/housesalesprediction
+http://info.kingcounty.gov/assessor/esales/Glossary.aspx?type=r
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+# Load all of the packages that you end up using in your analysis in this code chunk.
+
+# Load used libraries
+library(ggplot2)
+library(knitr)
+library(dplyr)
+library(GGally)
+library(rgdal)
+library(gridExtra)
+library(RColorBrewer)
+```
+
+Let's start by loading in the data.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Load_the_Data}
+# Load the Data
+houses <- read.csv('kc_house_data.csv')
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results="hide", Univariate_Plots}
+head(houses)
+#str(houses)
+
+# Convert some variables to factors
+houses$waterfront <- factor(houses$waterfront)
+houses$view <- ordered(houses$view)
+houses$condition <- ordered(houses$condition)
+houses$grade <- ordered(houses$grade)
+houses$floors <- ordered(houses$floors)
+```
+
+
+## Map over houses
+
+Before continueing with the analysis of this dataset, let's have a quick look 
+at the location of the sold houses in King County. Let's plot all houses by 
+their x and y value.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot() +  geom_point(data=houses, aes(x=long, y=lat))
+```
+
+To put things into perspective it would be useful to have a layer showing 
+the county.I have downloaded a shape file at the following url: 
+http://www5.kingcounty.gov/gisdataportal/
+I will use the rgdal package to read in the data.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results="hide"}
+counties<-readOGR("kingco.shp", layer="kingco")
+
+ggplot() + geom_polygon(data=counties, aes(x=long, y=lat, group=group))
+```
+
+When showing spatial information it is very important that all data has the same 
+projection, otherwise the points will not show up together correctly. 
+With the help of the following source I made sure that the points in 
+the houses dataset are transformed to the right projection.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results="hide"}
+class(houses)
+## [1] "data.frame"
+coordinates(houses)<-~long+lat
+class(houses)
+## [1] "SpatialPointsDataFrame"
+
+# does it have a projection/coordinate system assigned?
+proj4string(houses) # nope
+## [1] NA
+
+# the coordinate system is NAD83 so we can tell R what the coordinate system is
+proj4string(houses)<-CRS("+proj=longlat +datum=NAD83")
+
+# now we can use the spTransform function to project. We will project
+# the mapdata and for coordinate reference system (CRS) we will
+# assign the projection from counties
+
+houses<-spTransform(houses, CRS(proj4string(counties)))
+
+# double check that they match
+identical(proj4string(houses),proj4string(counties))
+## [1] TRUE
+
+# ggplot can't deal with SpatialPointsDataFrame so we can convert back
+houses<-data.frame(houses)
+
+ggplot() +geom_polygon(data=counties, aes(x=long, y=lat, group=group)) +
+  geom_point(data=houses, aes(x=long, y=lat, color=log10(price))) +
+    scale_colour_gradient(low = "green", high="red")
+```
+
+This plot accurately shows the location of point on the king county map. 
+Let's take a look at the average square meter price instead (log10).
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot() + geom_polygon(data=counties, aes(x=long, y=lat, group=group)) +
+  geom_point(data=houses, aes(x=long, y=lat, color=log10(price/sqft_living))) + 
+  scale_colour_gradient(low = "green", high="red")
+```
+
+
+# Univariate Plots Section
+
+### Price
+
+
+Let's take a look at some of the most important variables in this dataset.
+As we are trying to predict house prices, let's start with looking at the 
+distribution of price.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(houses$price)
+
+p1 <-ggplot(data = houses, aes(price)) + 
+      geom_histogram(color = 'black', fill = 'lightblue', binwidth = 50000) +
+      xlim(0, 2400000) 
+p2 <- ggplot(aes(x=1, y=price), data = houses) +
+  geom_boxplot( ) 
+grid.arrange(p1, p2, nrow = 1)
+```
+
+As can be seen, the distribution of prices is positively skewed. 
+This is to be expected as there typically are not as many very expensive houses 
+compared to houses in the median price range.
+
+Due to the long tail caused by outliers, let's try converting the x-axis on the logarithmic scale.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(price)) + 
+  geom_histogram(color = 'black', fill = 'lightblue') +
+  scale_x_log10()
+```
+
+This plot gives a better overview over the data, as the tail is removed and 
+the price distribution is now approximately normal distributed. 
+
+###Living space
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+p1 <- ggplot(data = houses, aes(sqft_living)) + 
+  geom_histogram(color = 'black', fill = 'lightblue') 
+
+p2 <- ggplot(aes(x=1, y=sqft_living), data = houses) +
+  geom_boxplot( ) 
+
+grid.arrange(p1, p2, nrow = 1)
+```
+
+For the same reasons previously mentioned, this plot can also be improved by 
+taking the common log of the x-axis.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(sqft_living)) + 
+  geom_histogram(color = 'black', fill = 'lightblue') + 
+  scale_x_log10()
+```
+
+Another way at looking at this would be the use of a relative frequency polygon.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = sqft_living, y = ..count../sum(..count..))) + 
+  geom_freqpoly() +
+  scale_x_log10()
+```
+
+###Lot size
+
+
+Now, let's plot lot size versus the common log of price.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+p1 <- ggplot(data = houses, aes(sqft_lot)) + 
+  geom_histogram(color = 'black', fill = 'lightblue') 
+
+p2 <- ggplot(aes(x=1, y=sqft_lot), data = houses) +
+  geom_boxplot( ) 
+
+grid.arrange(p1, p2, nrow = 1)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(houses$sqft_lot)
+```
+
+There are some extreme outliers, so the plot would benefit from taking the 
+natural log of the lot size.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(sqft_lot)) + 
+  geom_histogram(color = 'black', fill = 'lightblue') + 
+  scale_x_log10()
+```
+ 
+###Bedrooms
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(houses$bedrooms)
+
+p1 <- ggplot(data = houses, aes(bedrooms)) + 
+  geom_histogram(color = 'black', fill = 'lightblue', binwidth = 1) + 
+  xlim(0,10) +
+  scale_y_sqrt()
+
+p2 <- ggplot(aes(x=1, y=bedrooms), data = houses) +
+  geom_boxplot( ) 
+
+grid.arrange(p1, p2, nrow = 1)
+```
+
+There is one extreme outlier in the dataset, but we cannot be sure if this is 
+an error, or if a residence of this size actually exists. I will therefore 
+not remove it.
+
+###Bathrooms
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(houses$bathrooms)
+
+p1 <- ggplot(data = houses, aes(bathrooms)) + 
+  geom_histogram(color = 'black', fill = 'lightblue', binwidth = 0.5) + 
+  xlim(0,6)
+
+p2 <- ggplot(aes(x=1, y=bathrooms), data = houses) +
+  geom_boxplot( ) 
+
+grid.arrange(p1, p2, nrow = 1)
+```
+
+###Waterfront
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = factor(waterfront))) + 
+  geom_bar() +
+  scale_y_log10()
+
+#table(houses$waterfront)
+```
+
+A strong majority of the houses does not have a waterfront, with only 163 out
+of 21613 houses.
+
+###View
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = view)) + 
+  geom_bar() +
+  scale_y_log10()
+```
+ 
+Although it is unfortunately not completely known how the view variable 
+was judged, it seems clear that a strong majority was rated to have a lowly 
+ranked view, while the other categories are much less common.
+ 
+###Condition
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = condition)) + 
+  geom_bar() +
+  scale_y_log10()
+```
+
+Houses seem to be in quite a good condition on average, with more houses have 
+a condition of 3 and higher.
+
+###Grade
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = grade)) + 
+  geom_bar() +
+  scale_y_log10()
+```
+
+###Age
+
+
+Since the dataset includes the year the house was built, it is possible to 
+calculate the data by substracting the selling year by the build year. 
+This gives the age in years.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+houses$year_sold <- format(strptime(houses$date, '%Y%m%d'), '%Y')
+houses$year_sold <- as.numeric(as.character(houses$year_sold))
+
+# Strangely enough there are some houses with an age of -1
+# I will assume this is an error, and will change the -1 to 0 (new built)
+houses$age <- houses$year_sold - houses$yr_built
+houses$age <- ifelse(houses$age < 0, 0, houses$age)
+#houses[which(houses$age == -1),]
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+p1 <- ggplot(data = houses, aes(x = age)) + 
+  geom_histogram(binwidth = 1)
+
+p2 <- ggplot(aes(x=1, y=age), data = houses) +
+  geom_boxplot( ) 
+
+grid.arrange(p1, p2, nrow = 1)
+
+```
+
+###Renovation
+
+
+As in the previous section, it is possible to calculate how many years ago the
+house was renovated by substracting the selling year by the year of renovation. 
+This gives the amount of years since the last renovation.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+houses$last_renovation = ifelse(houses$yr_renovated != 0,
+                                houses$year_sold - houses$yr_renovated, NA)
+
+# Some houses miraculously were restorated after the house was sold
+# We change these from -1 to 0
+houses$last_renovation <- ifelse(houses$last_renovation < 0, 0, houses$last_renovation)
+#houses[which(houses$last_renovation == -1),]
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+p1 <- ggplot(data = houses, aes(x = last_renovation)) + 
+  geom_histogram(binwidth = 1)
+
+p2 <- ggplot(aes(x=1, y=last_renovation), data = houses) +
+  geom_boxplot( ) 
+
+grid.arrange(p1, p2, nrow = 1)
+```
+
+# Univariate Analysis
+
+### What is the structure of your dataset?
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+str(houses)
+```
+
+As mentioned in the introduction, there are 21613 observations with 21 variables.
+
+### What is/are the main feature(s) of interest in your dataset?
+
+The features we are most interested in are those that potentialy could influence 
+the price of houses in King County. It is not hard to imagine that most variables 
+in this dataset have some sort of relationship with price. Bigger houses will 
+naturally sell for more, all other variables being equal. The same will likely 
+be true for the newer houses, or houses in a better condition. In addition, it 
+will be interesting to see if other physicial attributes on the houses have any 
+influence on price, such as lot size, condition, renovation or age.
+
+### What other features in the dataset do you think will help support your investigation into your feature(s) of interest?
+
+It is likely that are a variety of environmental variables that also impact 
+price. In this datset there are included variables to account for the quality of 
+view, and whether the house has a waterfront or not. In addition there are two 
+variables which measure the average living and lot space from the closest 15 
+houses. This could also be seen as some kind of indication of the kind of 
+neighborhood the house is in, although the potential effectis not that intuitive.
+
+It is important to note though that there might be other variables like this 
+that influence price, which are not accounted for. Examples like this might be 
+the proximity to recreational areas, nature, or shopping centers. There could 
+also be environmental variables that have a negative effect on price, such as 
+the proximity to major roads. A more in depth spatial analysis using GIS might
+be called for to further improve the model build later on in this study.
+
+### Did you create any new variables from existing variables in the dataset?
+
+First, I have converted the "year built" and "year renovated" variables. In the 
+original dataset they appeared as the specific year the house was built/renovated, 
+but for this analysis it was deemed more useful to convert the variables to the 
+age of the house in total years, and the amount of years ago the renovation took 
+place. This was done by substracting the sale year by the age the house was 
+built or renovated.
+Second, I created a dummy variable to see whether a house has any basement or not.
+Third, I grouped the data in the month the house was sold to investigate any 
+trends in relation to time.
+Finally, I divided the dataset in 5 different age categories to use this for 
+plotting later on.
+
+### Of the features you investigated, were there any unusual distributions? Did you perform any operations on the data to tidy, adjust, or change the form of the data? If so, why did you do this?
+
+There were a variety of variables which needed to be converted. Many 
+distributions were positively skewed, since there are a smaller number of houses
+which were extraordinary large (and thus expensive). This problem was solved by
+taking the log10 of these, which in many cases made the distrubtion more similar
+to a normal distribution.
+
+# Bivariate Plots Section
+
+To get a quick look at possible variables that are correlated to each other, 
+we will use the GGally library to get a quick matrix plot of the relationships
+between multiple columns.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=20, fig.height=12, Ggpair}
+
+# Omit first column as these are IDs
+houses_subset <- subset(houses, select = c(price,bedrooms,bathrooms,sqft_living,
+                                           sqft_lot, floors,waterfront,view,
+                                           condition,grade,age,last_renovation))
+```
+
+```{r}
+set.seed(1836)
+ggpairs(houses_subset[sample.int(nrow(houses_subset), 500), ]) +
+  theme(axis.text.y = element_blank(), axis.text.x = element_blank())
+```
+
+As can be seen, there are several variables which on first view seems to be 
+correlated with price. Variables with correlation indexes of at least 0.5 are: 
+bathrooms, sqft_living, grade, sqft_above, sqft_living15, and 
+finally last_renovation.
+
+### Living space versus price
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, LivingSpace}
+ggplot(data = houses, aes(x = sqft_living, y = price)) +
+  geom_point(alpha = 0.20, color = "blue") +
+  geom_smooth(color = "darkblue") +
+  scale_x_sqrt()
+```
+
+While this plot is reasonable, it could benefit from transforming the y axis 
+since the scatter seems to increase with higher prices.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = sqft_living, y = price)) +
+  geom_point(alpha = 0.1) +
+  scale_x_sqrt() +
+  scale_y_log10() +
+  geom_smooth(color = "darkblue")
+```
+
+These two variables have a correlation index of:
+```{r}
+cor(houses$sqft_living, houses$price)
+```
+
+
+###Lot size versus price
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = sqft_lot, y = price)) +
+  geom_point(alpha = 0.25, color = "darkblue") +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_smooth()
+```
+
+It is difficult to see any form of strong relationship between price and lot 
+size.
+
+These two variables have a correlation index of:
+```{r}
+cor(houses$sqft_lot, houses$price)
+```
+
+With a correlation index of 0.09 I have decided not to take this variable
+along in any model.
+
+###Bedrooms versus price
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = factor(bedrooms), y = price)) +
+  geom_jitter(alpha = .3, color = 'lightblue') + 
+  geom_boxplot( alpha = .5,color = 'blue')+
+  stat_summary(fun.y = "mean", 
+               geom = "point", 
+               color = "black", 
+               shape = 8, 
+               size = 4)
+```
+
+The smooth line added to this plot seems to suggest that a higher number of
+bedrooms leads to higher price. Note that there is likely also a correlation 
+between bedrooms and size.
+
+These two variables have a correlation index of:
+```{r}
+cor(houses$bedrooms, houses$price)
+```
+
+###Bedrooms versus size
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = bedrooms, y = sqft_living)) +
+  geom_jitter(alpha = .1) + 
+  geom_smooth() +
+  scale_y_log10() + 
+  xlim(0, 10)
+```
+
+These two variables have a correlation index of:
+
+```{r}
+cor(houses$sqft_living, houses$bedrooms)
+```
+
+This is clearly the case, so we have to be careful when adding both variables 
+to a linear model.
+
+###Bathrooms versus price
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = bathrooms, y = price)) +
+  geom_jitter(alpha = .1) +
+  geom_smooth() +
+  scale_y_log10()
+```
+  
+Another upward trend can be seen here, and with a correlation index of 0.53 
+there seems to be a reasonable level of correlation between number of bathrooms 
+and house price. Again, bathrooms are probably correlated with size as well.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = bathrooms, y = sqft_living)) +
+  geom_jitter(aes(size = price), alpha = .1) + 
+  geom_smooth() +
+  scale_y_log10() + 
+  xlim(0, 8)
+```
+
+These two variables have a correlation index of:
+```{r}
+cor(houses$sqft_living, houses$bathrooms)
+```
+
+This is also the case here, so we again have to be careful when adding both 
+variables to a linear model.
+
+###Floors versus price
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = factor(floors), y = price)) +
+  geom_boxplot() +
+  scale_y_log10()
+```
+  
+The number of floors a house has, seems to have some kind of relationship with 
+price. Floors with 1,5 floors and up seem to be more expansive on average than 
+houses with only one floor. This effect seems to disappear with more floors 
+though.
+
+###Waterfront versus price
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = factor(waterfront), y = price)) +
+  geom_boxplot(aes(fill = factor(waterfront))) +
+  scale_y_log10()
+```
+
+The proximity to a body of water seems to have a positive effect on house 
+prices, as the majority of houses with waterfront are higher than the majority 
+of houses without.
+
+###View
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = ordered(view), y = price)) +
+  geom_boxplot(aes(fill = ordered(view))) +
+  scale_y_log10()
+```
+
+As with waterfront, the quality of view seems to have a positive effect on house 
+prices, with higher qualities of view associated with higher prices.
+
+###Condition
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+ggplot(data = houses, aes(x = factor(condition), y = price)) + 
+  geom_boxplot(aes(fill = factor(condition))) +
+  scale_y_log10()
+```
+
+Houses in a greater condition seem to sell for more.
+
+###Grade
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+ggplot(data = houses, aes(x = factor(grade), y = price)) + 
+  geom_boxplot(aes(fill = factor(grade))) +
+  scale_y_log10()
+```
+
+Houses that are graded more are clearly priced more than lower graded houses. 
+This is not unexpected as the grade could be seen as a combined variable of 
+several of the previous variables.
+
+##Basement space
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = subset(houses, houses$sqft_basement > 0), 
+       aes(x = sqft_basement, y = price)) + 
+  geom_point(alpha = 0.1) +
+  geom_smooth() +
+  scale_x_sqrt() + 
+  scale_y_log10()
+```
+
+These two variables have a correlation index of:
+```{r}
+cor(houses$sqft_basement, houses$price)
+```
+
+Basement size also seems to be positively correlated with price. 
+But let's have a look at whether this effect also can be seen when compared 
+houses with, and without, a basement.
+
+###Basement or not
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+houses$has_basement <- ifelse(houses$sqft_basement == 0, 0, 1)
+houses$has_basement <- factor(houses$has_basement)
+
+ggplot(data = houses, aes(x = factor(has_basement), y = price)) + 
+  geom_boxplot(aes(fill = factor(has_basement))) +
+  scale_y_log10()
+```
+
+###Ground level space
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = sqft_above, y = price)) + 
+  geom_point(alpha = 0.1) +
+  geom_smooth() +
+  scale_x_sqrt() +
+  scale_y_log10()
+```
+
+These two variables have a correlation index of:
+```{r}
+cor(houses$sqft_above, houses$price)
+```
+
+As could be seen with living space, the living space above ground (exluding 
+basement) is also strongly correlated with price.
+
+###Age
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = age, y = price)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth() +
+  scale_y_log10()
+```
+
+It's hard to see a correlation between these price and age. Let's try grouping 
+houses into age groups.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+houses$age_groups <- cut(houses$age, breaks = c(0,25,50,75,100,125))
+
+ggplot(data = houses %>% arrange(grade), aes(x = age_groups, y = price)) +
+  geom_boxplot() +
+  scale_y_log10()
+
+```
+
+These two variables have a correlation index of:
+```{r}
+cor(houses$age, houses$price)
+```
+
+Nwer houses seem to be slightly higher priced than medium aged houses, with very 
+old houses seeming to get more expansive again. This correlation is hard to see
+when looking at the correlation index.
+
+###Renovation
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = subset(houses, houses$last_renovation > 0), 
+       aes(x = last_renovation, y = price)) +
+  geom_point(alpha = 0.5) + 
+  geom_smooth() +
+  scale_y_log10()
+```
+
+Hard to make any conclusion, but it seems that recent renovations have a 
+positive effect on price, while less recent renovations lead to lower price. 
+This could be because the house is in a poor state.
+
+These two variables have a correlation index of:
+```{r}
+cor(houses$last_renovation, houses$price, use = "complete.ob")
+```
+
+###Neighbor living space
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = subset(houses, !is.na(sqft_living15)), aes(x = sqft_living15 , y = price)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth() +
+  scale_y_log10()
+```
+
+Houses in neighborhoods with large houses tend to be higher priced.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = subset(houses, !is.na(sqft_living15)), aes(x = sqft_living15 , y = sqft_living)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth() +
+  scale_x_sqrt() +
+  scale_y_log10()
+```
+
+These two variables have a correlation index of:
+```{r}
+cor(houses$sqft_living15, houses$price)
+```
+
+Houses in neighborhoods in proximity to larger houses, tend to be large. 
+This could explain the higher prices previously seen.
+
+###Neighbor lot size
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses, aes(x = sqft_lot15, y = price)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth() +
+  scale_x_sqrt() +
+  scale_y_log10()
+```
+
+These two variables have a correlation index of:
+```{r}
+cor(houses$sqft_lot15, houses$price)
+```
+
+No clear correlation here.
+
+###Month/Year
+
+
+It could be interesting to see if the month and year have any influence on 
+price, e.g. to see if there is any part of the price that could be explained by 
+trends in time, such as market changes. However, since the dataset covers little 
+more than a year, it is unlikely to be clear.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+houses$year_month <- format(strptime(houses$date, '%Y%m%d'), '01/%m/%Y')
+houses$year_month <- as.Date(houses$year_month, '%d/%m/%Y')
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+grouped_by_date <- group_by(houses, year_month)
+
+houses.by_month <- summarise(grouped_by_date, 
+                             mean_price = mean(price),
+                             median_price = median(price),
+                             mean_price_sqft = mean(price) / mean(sqft_living),
+                             n = n())
+
+houses.by_month <- arrange(houses.by_month, year_month)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+p1 <- ggplot(data = houses.by_month, aes(x = year_month, y = mean_price)) +
+  geom_line()
+
+p2 <- ggplot(data = houses.by_month, aes(x = year_month, y = median_price)) +
+  geom_line()
+
+p3 <- ggplot(data = houses.by_month, aes(x = year_month, y = mean_price_sqft)) +
+  geom_line()
+
+grid.arrange(p1, p2, p3, ncol = 1)
+```
+
+As could be seen, there is no general trend to be seen. There seem to be a 
+downward trend in the first months of the dataset, which could be due to 
+lower house prices in the winter months, but I am lacking further information 
+to confirm this. 
+
+# Bivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the investigation. How did the feature(s) of interest vary with other features in the dataset?
+
+Most of the variables were to some extend correlated with price. Variables where 
+this was not immediately clear from the plots are lot size, neighbour lot size, 
+and the age of the house. The strongest relationship was found between living 
+area and price. A suprise was found when plotting the month the house was sold 
+against the price. There seemed to be a trend visible which indicates lower
+house prices in the winter months. A quick search seems to indicate this is 
+actually quite normal.
+
+### Did you observe any interesting relationships between the other features (not the main feature(s) of interest)?
+
+It is important to mention the issue of multicollinearity. In this study we will 
+create a linear model with a variety of independant variables. It is likely 
+however that several of these independant variables might be correlated with 
+each other. Take for example the variable for living space and that for the 
+number of bathrooms and bedrooms. It can be expected that larger houses will
+also feature more bathrooms and bedrooms. This risk means that we have to be
+careful to add those variables together in a model, as they might explain the
+same kind of variation in house price.
+
+### What was the strongest relationship you found?
+The strongest relationship was found between living space and price. This is 
+not surprising as a larger house will always sell for more than a smaller house,
+all other features being equal. Surprisingly, the size of the whole lot did not 
+seem to be clearly correlated with price.
+
+# Multivariate Plots Section
+
+##Living space, price and condition
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses %>% arrange(condition), aes(x = sqft_living, y = price)) +
+  geom_point(aes(color = condition), alpha = 0.25) +
+  geom_smooth(method=lm,se=FALSE, aes(colour = condition)) +
+  scale_x_sqrt(limits = c(0,10000)) +
+  scale_y_log10() +
+    scale_color_brewer(type='seq', palette = 'BluGn',
+                   guide=guide_legend(title='condition'))
+```
+
+Houses in a better condition seem to be slightly higher priced, but the effect 
+is minimal.
+
+###Living space, price and view
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses %>% arrange(waterfront), aes(x = sqft_living, y = price)) +
+  geom_point(aes(color = view), alpha = 0.25) +
+  geom_smooth(method=lm,se=FALSE, aes(colour = view)) +
+  scale_x_sqrt(limits = c(0,10000)) +
+  scale_y_log10() +
+    scale_color_brewer(type='seq', palette = 'Oranges',
+                   guide=guide_legend(title='View'))
+```
+
+Houses with better views seem to have higher average prices.
+
+###Living space, price and waterfront
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = houses %>% arrange(waterfront), aes(x = sqft_living, y = price)) +
+  geom_point(aes(color = factor(waterfront)), alpha = 0.25) +
+  geom_smooth(method=lm,se=FALSE, aes(colour = waterfront)) +
+  scale_x_sqrt(limits = c(0,10000)) +
+  scale_y_log10() +
+  scale_color_brewer(type='qual', palette = 'Paired',
+                   guide=guide_legend(title='Waterfront'))
+```
+
+This plot clearly shows that prices are higher for houses with waterfront 
+when comparing house of similar size.
+
+###Living space, price and grade
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+spec <- colorRampPalette(brewer.pal('Spectral',n=12))
+
+ggplot(data = houses %>% arrange(grade)
+       , aes(x = sqft_living,
+             y = price, 
+             color = grade)) +
+  geom_point(aes(color = grade), alpha = 1) +
+  scale_x_sqrt(limits = c(0,10000)) +
+  stat_ellipse(size=3)+
+  scale_y_log10()+  
+  scale_color_manual(values = setNames(spec(13), levels(houses$grade)))
+```
+
+Higher graded houses also clearly seem to be more expensive.
+
+###Living space above surface vs basement space
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = subset(houses, houses$sqft_basement > 0)) +
+  geom_point(aes(x = sqft_above, y = price), 
+             color = "red", alpha = 0.1) +
+  geom_point(aes(x = sqft_basement, y = price), 
+             color = "darkblue", alpha = 0.1) +
+  scale_x_sqrt(limits = c(0,10000)) +
+  scale_y_log10()
+```
+
+Living space above surface (red) seems to be valued more than 
+basement space (blue).
+
+#Building a model
+
+Now I will build a model with many of the variables analyzed before.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Building_Model}
+
+m1 <- lm(I(log10(price)) ~ I(sqrt(sqft_living)), data = houses)
+m2 <- update(m1, ~ . + waterfront)
+m3 <- update(m2, ~ . + view)
+m4 <- update(m3, ~ . + condition)
+m5 <- update(m4, ~ . + age)
+m6 <- update(m5, ~ . + bathrooms)
+m7 <- update(m6, ~ . + floors)
+m8 <- update(m7, ~ . + sqrt(sqft_basement))
+m9 <- update(m8, ~ . + sqft_living15)
+m10 <- update(m9, ~ . + grade)
+m11 <- update(m10, ~ . + has_basement)
+m12 <- update(m11, ~ . + last_renovation) 
+summary(m12)
+```
+
+This model was built by first adding all variables, seeing which were 
+significant or not. Variables which were not significant did then get removed
+from the model. These were: sqft_above, lot size, and bedrooms. This is most
+likely to do to the earlier mentioned multicollinearity, since these 3 removed
+variables are likely also heavily correlated with total living space, a variable
+which is included in the model. All in all, the model has a adjusted R-squared 
+value of 0.7561, meaning that roughly 75% of price variation can be explained 
+by the included variables.
+
+# Multivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the investigation. Were there features that strengthened each other in terms of looking at your feature(s) of interest?
+
+Yes, as discussed before, many of the independant variables were correlated 
+with each other. Living space, lot size, above ground living space, basement 
+space, living space and lot size of the closest 15 neighbors, number of 
+bathrooms, and finally number of bedrooms, can all be seen as some form of
+measure of the size of the house. We therefore had to be careful with including 
+all these in the same linear model.
+
+### Were there any interesting or surprising interactions between features?
+Most interesting interactions are already discussed in the previous paragraph. 
+All of the categorical variables seemed to have an clear correlation with price,
+when keeping houses of the same size. This was the case for view, condition, 
+grade, and waterfront.
+
+### OPTIONAL: Did you create any models with your dataset? Discuss the strengths and limitations of your model.
+
+Yes, see above. The strenghts of this model are that it explains 75% of the 
+variation in price. This is quite high, and will likely not be able to get much
+higher with this dataset. 
+
+It is important to realize there are other factors that might influence house 
+prices, that are not a part of this model. There is for example no real variable
+to indicate the proximity to a large city (Seattle in this case). From personal
+experience I know that the proximity to large urban centers can really impact 
+house prices. In addition, there are indicators for the type of neighborhood
+the house is in, except for the average house size of neighboors. Perhaps the 
+neighborhood is in a poor state, there are problems with criminality, or there
+are no good schools nearby? Finally, some physical factors regarding the house 
+are not included. One important thing that comes to mind is how well isolated 
+the house is.
+
+Another previously mentioned potential problem is that some of the indepedant 
+variables might be corrolated with each other. While some of these have been 
+removed for exactly this reason, there could sitll be cases of this remaining 
+in this model. Living space, number of bathrooms, and the number of floors comes
+to mind.
+
+# Final Plots and Summary
+
+### Plot One
+```{r echo=FALSE, message=FALSE, warning=FALSE, Plot_One}
+ggplot(data = houses, aes(x = view, y = price)) +
+  geom_boxplot(aes(fill = view)) +
+  scale_y_log10() +
+  labs(fill = "View rating: 0-4", x="View rating",
+       y= "Log of price in dollars ($)", title="Influence of view on price")
+```
+
+### Description One
+This boxplot shows the correlation between the view rating and price. It shows
+that houses with a greater view have greater median prices than houses with no 
+or a poor view.
+
+### Plot Two
+```{r echo=FALSE, message=FALSE, warning=FALSE, Plot_Two}
+set3 <- colorRampPalette(brewer.pal('Greens',n=12))
+
+ggplot(data = houses %>% arrange(grade), aes(x = sqft_living, y = price)) +
+  geom_point(aes(color = grade), alpha = 1) +
+  scale_x_sqrt(limits = c(0,10000)) +
+  scale_y_log10() +
+  labs(colour = "Grade 1-13", 
+       x="Living space in the squared root of square feet", y= 
+         "Log of price in dollars ($)", 
+       title="Relationship between house size and price, with houses graded 
+       for construction quality") +
+  geom_smooth() +
+  scale_color_manual(values = setNames(set3(13), levels(houses$grade)))
+```
+
+### Description Two
+This plot clearly shows that there is a correlation between living space and 
+price. In addition, houses with higher grades also were sold for more on the 
+market compared to houses with lower grades. 
+
+### Plot Three
+```{r echo=FALSE, message=FALSE, warning=FALSE, Plot_Three}
+p1 <- ggplot(data = houses.by_month, aes(x = year_month, y = median_price)) +
+  geom_line(color="darkblue") +
+  labs(x="Month in which houses were sold", 
+       y="Average house price ($)", 
+       title="Time trend in house prices") +
+  scale_y_continuous(limits = c(420000, 480000))
+
+p2 <- ggplot(data = houses.by_month, aes(x = year_month, y = n)) +
+  geom_bar(fill="darkblue", stat="identity") +
+  labs(x="Month in which houses were sold", y="Number of houses sold", 
+       title="Houses sold per month")
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+### Description Three
+The upper plot shows the average house price of houses sold per month over the 
+datasets time period. The lower plot shows the same period, but shows the total 
+houses sold per month. House prices and houses sold seem to be lower in winter 
+months.
+
+# Reflection
+
+I am quite happy with the results of this project. A large number of variables 
+were found to be more or less correlated with the house price.Some variables 
+that were expected to be correlated with price, were as a matter of fact not 
+correlated. An example of this was lot size. Other variables that I did not
+expect to have an impact on price, were actually correlated with price. This was
+true for the month the house was sold, although the relationship was not linear.
+Finally, there were variables that had an opposite effect than was expected.
+Increasing buildings age was actually found to have a positive effect on price, 
+with the exception of recently build houses.
+
+The model produced explains roughly 75% of the variation in house prices. 
+This could definately be improved upon with more data. As I have previously 
+mentioned there a variety of environmental variables, as well as some more 
+characteristics of the house that are missing. Issues such as nearby schools,
+road noise, criminality, or proximity to urban centers are not included and I
+would expect these to improve the model if included.
+
+Overall it has been an extremely learnful process, and a lot of thought has gone 
+into the different kind of graphs that can best visualize a relationship.
+Colors are very important here as well.
+Challenges were in the decision which variables to include in the linear model.
+As discussed, many dependant variables relate to each other, with the best
+example of this all the different variables related to size. It is difficult to
+judge whether to include all of these. Most variables were actually found to be 
+significant in predicting prices, but each variable did not add much to the 
+overall strenght of the model.
